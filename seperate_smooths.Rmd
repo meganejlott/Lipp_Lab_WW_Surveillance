@@ -1,0 +1,462 @@
+---
+title: "indiv smooths"
+author: "William Norfolk"
+date: "10/14/2020"
+output: html_document
+---
+
+Load all required libraries.
+```{r}
+library(tidyverse)
+library(plotly)
+library(broom)
+```
+
+Read in raw data from RDS.
+```{r}
+raw_data <- readRDS("./n1_n2_cleaned_cases.rds")
+```
+
+Make a few small modifications to names and data for visualizations.
+```{r}
+final_data <- raw_data %>% mutate(log_copy_per_L = log10(mean_copy_num_L)) %>%
+  rename(Facility = wrf) %>%
+  mutate(Facility = recode(Facility, 
+                           "NO" = "WRF A",
+                           "MI" = "WRF B",
+                           "CC" = "WRF C"))
+```
+
+
+Seperate the data by gene target to ease layering in the final plot
+```{r}
+#make three data layers
+only_positives <<- subset(final_data, (!is.na(final_data$Facility)))
+only_n1 <- subset(only_positives, target == "N1")
+only_n2 <- subset(only_positives, target == "N2")
+only_background <<-final_data %>% 
+  select(c(date, cases_cum_clarke, new_cases_clarke, X7_day_ave_clarke)) %>%
+  group_by(date) %>% summarise_if(is.numeric, mean)
+
+#specify fun colors
+background_color <- "#7570B3"
+seven_day_ave_color <- "#E6AB02"
+marker_colors <- c("N1" = '#1B9E77',"N2" ='#D95F02')
+    
+```
+
+```{r}
+
+#remove facilty C for now
+#only_n1 <- only_n1[!(only_n1$Facility == "WRF C"),]
+#only_n2 <- only_n2[!(only_n2$Facility == "WRF C"),]
+
+only_n1 <- only_n1[!(only_n1$Facility == "WRF A" & only_n1$date == "2020-11-02"), ]
+only_n2 <- only_n2[!(only_n2$Facility == "WRF A" & only_n2$date == "2020-11-02"), ]
+
+```
+
+
+Build the main plot
+```{r}
+
+      #first layer is the background epidemic curve
+        p1 <- only_background %>%
+              plotly::plot_ly() %>%
+              plotly::add_trace(x = ~date, y = ~new_cases_clarke, 
+                                type = "bar", 
+                                hoverinfo = "text",
+                                text = ~paste('</br> Date: ', date,
+                                                     '</br> Daily Cases: ', new_cases_clarke),
+                                alpha = 0.5,
+                                name = "Daily Reported Cases",
+                                color = background_color,
+                                colors = background_color,
+                                showlegend = FALSE) %>%
+            layout(yaxis = list(title = "Clarke County Daily Cases", showline=TRUE)) %>%
+            layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
+        
+        #renders the main plot layer two as seven day moving average
+        p1 <- p1 %>% plotly::add_trace(x = ~date, y = ~X7_day_ave_clarke, 
+                             type = "scatter",
+                             mode = "lines",
+                             hoverinfo = "text",
+                            text = ~paste('</br> Date: ', date,
+                                                     '</br> Seven-Day Moving Average: ', X7_day_ave_clarke),
+                             name = "Seven Day Moving Average Athens",
+                             line = list(color = seven_day_ave_color),
+                             showlegend = FALSE)
+      
+
+        
+        #renders the main plot layer three as positive target hits
+        
+        p2 <- plotly::plot_ly() %>%
+          plotly::add_trace(x = ~date, y = ~mean_copy_num_L,
+                                       type = "scatter",
+                                       mode = "markers",
+                                       hoverinfo = "text",
+                                       text = ~paste('</br> Date: ', date,
+                                                     '</br> Facility: ', Facility,
+                                                     '</br> Target: ', target,
+                                                     '</br> Copies/L: ', round(mean_copy_num_L, digits = 2)),
+                                       data = only_n1,
+                                       symbol = ~Facility,
+                                       marker = list(color = '#1B9E77', size = 8, opacity = 0.65),
+                                       showlegend = FALSE) %>%
+          plotly::add_trace(x = ~date, y = ~mean_copy_num_L,
+                                       type = "scatter",
+                                       mode = "markers",
+                                       hoverinfo = "text",
+                                       text = ~paste('</br> Date: ', date,
+                                                     '</br> Facility: ', Facility,
+                                                     '</br> Target: ', target,
+                                                     '</br> Copies/L: ', round(mean_copy_num_L, digits = 2)),
+                                       data = only_n2,
+                                       symbol = ~Facility,
+                                       marker = list(color = '#D95F02', size = 8, opacity = 0.65),
+                                       showlegend = FALSE) %>%
+            layout(yaxis = list(title = "SARS CoV-2 Copies/L", 
+                                 showline = TRUE,
+                                 type = "log",
+                                 dtick = 1,
+                                 automargin = TRUE)) %>%
+            layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
+        
+        #adds the limit of detection dashed line
+        p2 <- p2 %>% plotly::add_segments(x = as.Date("2020-03-14"), 
+                                          xend = ~max(date + 10), 
+                                          y = 3571.429, yend = 3571.429,
+                                          opacity = 0.35,
+                                          line = list(color = "black", dash = "dash")) %>%
+          layout(annotations = list(x = as.Date("2020-03-28"), y = 3.8, xref = "x", yref = "y", 
+                                    text = "Limit of Detection", showarrow = FALSE))
+
+        
+
+        p1
+        p2
+        
+```
+Combine the two main plot pieces as a subplot
+
+
+```{r}
+#seperate n1 and n2 frames by site
+#n1
+wrf_a_only_n1 <- subset(only_n1, Facility == "WRF A")
+wrf_b_only_n1 <- subset(only_n1, Facility == "WRF B")
+wrf_c_only_n1 <- subset(only_n1, Facility == "WRF C")
+
+#n2
+wrf_a_only_n2 <- subset(only_n2, Facility == "WRF A")
+wrf_b_only_n2 <- subset(only_n2, Facility == "WRF B")
+wrf_c_only_n2 <- subset(only_n2, Facility == "WRF C")
+
+
+#rejoin the old data frames then seperate in to averages for each plant. 
+wrfa_both <- full_join(wrf_a_only_n1, wrf_a_only_n2)%>%
+  select(c(date, mean_total_copies)) %>%
+  group_by(date) %>%
+  summarize_if(is.numeric, mean) %>%
+  ungroup() %>%
+  mutate(log_total_copies_both = log10(mean_total_copies))
+  
+wrfb_both <- full_join(wrf_b_only_n1, wrf_b_only_n2)%>%
+  select(c(date, mean_total_copies)) %>%
+  group_by(date) %>%
+  summarize_if(is.numeric, mean) %>%
+  ungroup() %>%
+  mutate(log_total_copies_both = log10(mean_total_copies))
+
+
+wrfc_both <- full_join(wrf_c_only_n1, wrf_c_only_n2)%>%
+  select(c(date, mean_total_copies)) %>%
+  group_by(date) %>%
+  summarize_if(is.numeric, mean) %>%
+  ungroup() %>%
+  mutate(log_total_copies_both = log10(mean_total_copies))
+
+
+```
+
+```{r}
+#get max date
+maxdate <- max(wrfa_both$date)
+mindate <- min(wrfa_both$date)
+
+```
+
+
+Build loess smoothing figures figures
+
+######### This makes the individual plots
+
+```{r}
+#**************************************WRF A PLOT**********************************************
+#add trendlines 
+#extract data from geom_smooth
+#both extract
+# *********************************span 0.6***********************************
+#*****************Must always update the n = TOTAL NUMBER OF DAYS*************************
+extract_botha <- ggplot(wrfa_both, aes(x = date, y = log_total_copies_both)) + 
+  stat_smooth(aes(outfit=fit_botha<<-..y..), method = "loess", color = '#1B9E77', 
+              span = 0.25, n = 786)
+
+#look at the fits to align dates and total observations
+#both
+extract_botha
+fit_botha
+
+#assign fits to a vector
+both_trenda <- fit_botha
+
+#extract y min and max for each
+limits_botha <- ggplot_build(extract_botha)$data
+limits_botha <- as.data.frame(limits_botha)
+both_ymina <- limits_botha$ymin
+both_ymaxa <- limits_botha$ymax
+
+#reassign dataframes (just to be safe)
+work_botha <- wrfa_both
+
+#fill in missing dates to smooth fits
+work_botha <- work_botha %>% complete(date = seq(min(date), max(date), by = "1 day"))
+date_vec_botha <- work_botha$date
+
+#create a new smooth dataframe to layer
+smooth_frame_botha <- data.frame(date_vec_botha, both_trenda, both_ymina, both_ymaxa)
+
+```
+```{r}
+#WRF A
+#plot smooth frames
+p_wrf_a <- plotly::plot_ly() %>%
+  plotly::add_lines(x = ~date_vec_botha, y = ~both_trenda,
+                    data = smooth_frame_botha,
+                    hoverinfo = "text",
+                    text = ~paste('</br> Date: ', date_vec_botha,
+                                  '</br> Median Log Copies: ', round(both_trenda, digits = 2)),
+                    line = list(color = '#1B9E77', size = 8, opacity = 0.65),
+                    showlegend = FALSE) %>%
+     layout(xaxis = list(range = c(mindate - 7, maxdate + 7))) %>% #buffer here
+plotly::add_ribbons(x ~date_vec_botha, ymin = ~both_ymina, ymax = ~both_ymaxa,
+                    showlegend = FALSE,
+                    opacity = 0.25,
+                    hoverinfo = "text",
+                    text = ~paste('</br> Date: ', date_vec_botha, #leaving in case we want to change
+                                  '</br> Max Log Copies: ', round(both_ymaxa, digits = 2),
+                                  '</br> Min Log Copies: ', round(both_ymina, digits = 2)),
+                    name = "",
+                    fillcolor = '#1B9E77',
+                    line = list(color = '#1B9E77')) %>%
+                layout(yaxis = list(title = "Total Log10 SARS CoV-2 Copies", 
+                                 showline = TRUE,
+                                 automargin = TRUE)) %>%
+                layout(xaxis = list(title = "Date")) %>%
+                layout(title = "WRF A") %>%
+  plotly::add_markers(x = ~date, y = ~log_total_copies_both,
+                      data = wrfa_both,
+                       hoverinfo = "text",
+                       showlegend = FALSE,
+                       text = ~paste('</br> Date: ', date, 
+                                     '</br> Actual Log Copies: ', round(log_total_copies_both, digits = 2)),
+                       marker = list(color = '#1B9E77', size = 6, opacity = 0.65))
+
+p_wrf_a
+```
+
+```{r}
+save(p_wrf_a, file = "./plotly_objs/p_wrf_a.rda")
+```
+
+```{r}
+#**************************************WRF B PLOT**********************************************
+#add trendlines 
+#extract data from geom_smooth
+#both extract
+# *********************************span 0.6***********************************
+#*****************Must always update the n = TOTAL NUMBER OF DAYS*************************
+extract_bothb <- ggplot(wrfb_both, aes(x = date, y = log_total_copies_both)) + 
+  stat_smooth(aes(outfit=fit_bothb<<-..y..), method = "loess", color = '#D95F02', 
+              span = 0.25, n = 786)
+
+#look at the fits to align dates and total observations
+#both
+extract_bothb
+fit_bothb
+
+#assign fits to a vector
+both_trendb <- fit_bothb
+
+#extract y min and max for each
+limits_bothb <- ggplot_build(extract_bothb)$data
+limits_bothb <- as.data.frame(limits_bothb)
+both_yminb <- limits_bothb$ymin
+both_ymaxb <- limits_bothb$ymax
+
+#reassign dataframes (just to be safe)
+work_bothb <- wrfb_both
+
+#fill in missing dates to smooth fits
+work_bothb <- work_bothb %>% complete(date = seq(min(date), max(date), by = "1 day"))
+date_vec_bothb <- work_bothb$date
+
+#create a new smooth dataframe to layer
+smooth_frame_bothb <- data.frame(date_vec_bothb, both_trendb, both_yminb, both_ymaxb)
+```
+
+```{r}
+#WRF B
+#plot smooth frames
+p_wrf_b <- plotly::plot_ly() %>%
+  plotly::add_lines(x = ~date_vec_bothb, y = ~both_trendb,
+                    data = smooth_frame_bothb,
+                    hoverinfo = "text",
+                    text = ~paste('</br> Date: ', date_vec_bothb,
+                                  '</br> Median Log Copies: ', round(both_trendb, digits = 2)),
+                    line = list(color = '#D95F02', size = 8, opacity = 0.65),
+                    showlegend = FALSE) %>%
+     layout(xaxis = list(range = c(mindate - 7, maxdate + 7))) %>% #buffer here
+plotly::add_ribbons(x ~date_vec_bothb, ymin = ~both_yminb, ymax = ~both_ymaxb,
+                    showlegend = FALSE,
+                    opacity = 0.25,
+                    hoverinfo = "text",
+                    text = ~paste('</br> Date: ', date_vec_bothb, #leaving in case we want to change
+                                  '</br> Max Log Copies: ', round(both_ymaxb, digits = 2),
+                                  '</br> Min Log Copies: ', round(both_yminb, digits = 2)),
+                    name = "",
+                    fillcolor = '#D95F02',
+                    line = list(color = '#D95F02')) %>%
+                layout(yaxis = list(title = "Total Log10 SARS CoV-2 Copies", 
+                                 showline = TRUE,
+                                 automargin = TRUE)) %>%
+                layout(xaxis = list(title = "Date")) %>%
+                layout(title = "WRF B") %>%
+  plotly::add_markers(x = ~date, y = ~log_total_copies_both,
+                      data = wrfb_both,
+                       hoverinfo = "text",
+                       showlegend = FALSE,
+                       text = ~paste('</br> Date: ', date, 
+                                     '</br> Actual Log Copies: ', round(log_total_copies_both, digits = 2)),
+                       marker = list(color = '#D95F02', size = 6, opacity = 0.65))
+
+p_wrf_b
+```
+
+```{r}
+save(p_wrf_b, file = "./plotly_objs/p_wrf_b.rda")
+```
+
+
+
+
+#**************************************WRF C PLOT********************************************** 
+#add trendlines 
+#extract data from geom_smooth
+# *********************************span 0.6***********************************
+#*****************Must always update the n = TOTAL NUMBER OF DAYS*************************
+
+```{r}
+extract_bothc <- ggplot(wrfc_both, aes(x = date, y = log_total_copies_both)) + 
+  stat_smooth(aes(outfit=fit_bothc<<-..y..), method = "loess", color = '#E7298A', 
+              span = 0.25, n = 786)
+
+#look at the fits to align dates and total observations
+#both
+extract_bothc
+fit_bothc
+
+#assign fits to a vector
+both_trendc <- fit_bothc
+
+#extract y min and max for each
+limits_bothc <- ggplot_build(extract_bothc)$data
+limits_bothc <- as.data.frame(limits_bothc)
+both_yminc <- limits_bothc$ymin
+both_ymaxc <- limits_bothc$ymax
+
+#reassign dataframes (just to be safe)
+work_bothc <- wrfc_both
+
+#fill in missing dates to smooth fits
+work_bothc <- work_bothc %>% complete(date = seq(min(date), max(date), by = "1 day"))
+date_vec_bothc <- work_bothc$date
+
+#create a new smooth dataframe to layer
+smooth_frame_bothc <- data.frame(date_vec_bothc, both_trendc, both_yminc, both_ymaxc)
+```
+
+
+```{r}
+
+#WRF C
+#plot smooth frames
+p_wrf_c <- plotly::plot_ly() %>%
+  plotly::add_lines(x = ~date_vec_bothc, y = ~both_trendc,
+                    data = smooth_frame_bothc,
+                    hoverinfo = "text",
+                    text = ~paste('</br> Date: ', date_vec_bothc,
+                                  '</br> Median Log Copies: ', round(both_trendc, digits = 2)),
+                    line = list(color = '#E7298A', size = 8, opacity = 0.65),
+                    showlegend = FALSE) %>%
+     layout(xaxis = list(range = c(mindate - 7, maxdate + 7))) %>% #buffer here
+plotly::add_ribbons(x ~date_vec_bothc, ymin = ~both_yminc, ymax = ~both_ymaxc,
+                    showlegend = FALSE,
+                    opacity = 0.25,
+                    hoverinfo = "text",
+                    text = ~paste('</br> Date: ', date_vec_bothc, #leaving in case we want to change
+                                  '</br> Max Log Copies: ', round(both_ymaxc, digits = 2),
+                                  '</br> Min Log Copies: ', round(both_yminc, digits = 2)),
+                    name = "",
+                    fillcolor = '#E7298A',
+                    line = list(color = '#E7298A')) %>%
+                layout(yaxis = list(title = "Total Log10 SARS CoV-2 Copies", 
+                                 showline = TRUE,
+                                 automargin = TRUE)) %>%
+                layout(xaxis = list(title = "Date")) %>%
+                layout(title = "WRF C") %>%
+  plotly::add_markers(x = ~date, y = ~log_total_copies_both,
+                      data = wrfc_both,
+                       hoverinfo = "text",
+                       showlegend = FALSE,
+                       text = ~paste('</br> Date: ', date, 
+                                     '</br> Actual Log Copies: ', round(log_total_copies_both, digits = 2)),
+                       marker = list(color = '#E7298A', size = 6, opacity = 0.65))
+
+p_wrf_c
+
+```
+
+```{r}
+save(p_wrf_c, file = "./plotly_objs/p_wrf_c.rda")
+```
+
+
+```{r}
+save(wrfa_both, file = "./plotly_objs/wrfa_both.rda")
+save(wrfb_both, file = "./plotly_objs/wrfb_both.rda")
+save(wrfc_both, file = "./plotly_objs/wrfc_both.rda")
+
+```
+
+```{r}
+save(date_vec_botha, file = "./plotly_objs/date_vec_botha.rda")
+save(date_vec_bothb, file = "./plotly_objs/date_vec_bothb.rda")
+save(date_vec_bothc, file = "./plotly_objs/date_vec_bothc.rda")
+```
+
+```{r}
+save(both_ymina, file = "./plotly_objs/both_ymina.rda")
+save(both_ymaxa, file = "./plotly_objs/both_ymaxa.rda")
+
+save(both_yminb, file = "./plotly_objs/both_yminb.rda")
+save(both_ymaxb, file = "./plotly_objs/both_ymaxb.rda")
+
+save(both_yminc, file = "./plotly_objs/both_yminc.rda")
+save(both_ymaxc, file = "./plotly_objs/both_ymaxc.rda")
+
+```
+
+
+

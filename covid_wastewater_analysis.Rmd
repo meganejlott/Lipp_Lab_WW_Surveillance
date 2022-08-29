@@ -1,0 +1,501 @@
+---
+title: "Wastewater Surviellence for SARS-CoV-2 in Athens, GA"
+author: "Lipp Laboratory, Department of Environmental Health Science, University of Georgia"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc_depth: 3
+---
+Load all required libraries.
+```{r}
+library(tidyverse)
+library(plotly)
+library(broom)
+```
+
+Read in raw data from RDS.
+```{r}
+raw_data <- readRDS("./n1_n2_cleaned_cases.rds")
+```
+
+Make a few small modifications to names and data for visualizations.
+```{r}
+final_data <- raw_data %>% mutate(log_copy_per_L = log10(mean_copy_num_L)) %>%
+  rename(Facility = wrf) %>%
+  mutate(Facility = recode(Facility, 
+                           "NO" = "WRF A",
+                           "MI" = "WRF B",
+                           "CC" = "WRF C"))
+```
+
+
+Seperate the data by gene target to ease layering in the final plot
+```{r}
+#make three data layers
+only_positives <<- subset(final_data, (!is.na(final_data$Facility)))
+only_n1 <- subset(only_positives, target == "N1")
+only_n2 <- subset(only_positives, target == "N2")
+only_background <<-final_data %>% 
+  select(c(date, cases_cum_clarke, new_cases_clarke, X7_day_ave_clarke)) %>%
+  group_by(date) %>% summarise_if(is.numeric, mean)
+
+#specify fun colors
+background_color <- "#7570B3"
+seven_day_ave_color <- "#E6AB02"
+marker_colors <- c("N1" = '#1B9E77',"N2" ='#D95F02')
+    
+```
+
+```{r}
+#remove facilty C for now
+#only_n1 <- only_n1[!(only_n1$Facility == "WRF C"),]
+#only_n2 <- only_n2[!(only_n2$Facility == "WRF C"),]
+
+only_n1 <- only_n1[!(only_n1$Facility == "WRF A" & only_n1$date == "2020-11-02"), ]
+only_n2 <- only_n2[!(only_n2$Facility == "WRF A" & only_n2$date == "2020-11-02"), ]
+
+```
+
+Build the main plot
+```{r}
+#KEEP BOTH TARGETS HERE ON THE ALL DATA PLOT
+
+      #first layer is the background epidemic curve
+        p1 <- only_background %>%
+              plotly::plot_ly() %>%
+              plotly::add_trace(x = ~date, y = ~new_cases_clarke, 
+                                type = "bar", 
+                                hoverinfo = "text",
+                                text = ~paste('</br> Date: ', date,
+                                                     '</br> Daily Cases: ', new_cases_clarke),
+                                alpha = 0.5,
+                                name = "Daily Reported Cases",
+                                color = background_color,
+                                colors = background_color,
+                                showlegend = FALSE) %>%
+            layout(yaxis = list(title = "Daily Cases", showline=TRUE)) %>%
+            layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
+        
+        #renders the main plot layer two as seven day moving average
+        p1 <- p1 %>% plotly::add_trace(x = ~date, y = ~X7_day_ave_clarke, 
+                             type = "scatter",
+                             mode = "lines",
+                             hoverinfo = "text",
+                            text = ~paste('</br> Date: ', date,
+                                                     '</br> Seven-Day Moving Average: ', X7_day_ave_clarke),
+                             name = "Seven Day Moving Average Athens",
+                             line = list(color = seven_day_ave_color),
+                             showlegend = FALSE)
+      
+
+        
+        #renders the main plot layer three as positive target hits
+        
+        p2 <- plotly::plot_ly() %>%
+          plotly::add_trace(x = ~date, y = ~mean_copy_num_L,
+                                       type = "scatter",
+                                       mode = "markers",
+                                       hoverinfo = "text",
+                                       text = ~paste('</br> Date: ', date,
+                                                     '</br> Facility: ', Facility,
+                                                     '</br> Target: ', target,
+                                                     '</br> Copies/L: ', round(mean_copy_num_L, digits = 2)),
+                                       data = only_n1,
+                                       symbol = ~Facility,
+                                       marker = list(color = '#1B9E77', size = 8, opacity = 0.65),
+                                       showlegend = FALSE) %>%
+          plotly::add_trace(x = ~date, y = ~mean_copy_num_L,
+                                       type = "scatter",
+                                       mode = "markers",
+                                       hoverinfo = "text",
+                                       text = ~paste('</br> Date: ', date,
+                                                     '</br> Facility: ', Facility,
+                                                     '</br> Target: ', target,
+                                                     '</br> Copies/L: ', round(mean_copy_num_L, digits = 2)),
+                                       data = only_n2,
+                                       symbol = ~Facility,
+                                       marker = list(color = '#D95F02', size = 8, opacity = 0.65),
+                                       showlegend = FALSE) %>%
+            layout(yaxis = list(title = "SARS CoV-2 Copies/L", 
+                                 showline = TRUE,
+                                 type = "log",
+                                 dtick = 1,
+                                 automargin = TRUE)) %>%
+            layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
+        
+        #adds the limit of detection dashed line
+        p2 <- p2 %>% plotly::add_segments(x = as.Date("2020-03-14"), 
+                                          xend = ~max(date + 10), 
+                                          y = 3571.429, yend = 3571.429,
+                                          opacity = 0.35,
+                                          hoverinfo = "text",
+                                          text = "Limit of Detection",
+                                          line = list(color = "black", dash = "dash")) %>%
+          layout(annotations = list(x = as.Date("2020-03-28"), y = 3.8, xref = "x", yref = "y", 
+                                    text = "Limit of Detection", showarrow = FALSE))
+
+        
+
+        p1
+        p2
+        
+```
+Combine the two main plot pieces as a subplot
+
+```{r}
+p_combined <-
+    plotly::subplot(p2,p1, # plots to combine, top to bottom
+      nrows = 2,
+      heights = c(.6,.4),  # relative heights of the two plots
+      shareX = TRUE,  # plots will share an X axis
+      titleY = TRUE
+    ) %>%
+    # create a vertical "spike line" to compare data across 2 plots
+    plotly::layout(
+      xaxis = list(
+        spikethickness = 1,
+        spikedash = "dot",
+        spikecolor = "black",
+        spikemode = "across+marker",
+        spikesnap = "cursor"
+      ),
+      yaxis = list(spikethickness = 0)
+    )
+p_combined
+```
+
+
+
+Save the plot to pull into the index
+```{r}
+save(p_combined, file = "./all_data.rda")
+```
+
+
+```{r}
+rejoin <- readRDS("./rejoin.rds")
+```
+
+
+Build loess smoothing figures figures
+
+```{r}
+#create smoothing data frames 
+#n1
+smooth_n1 <- only_n1 %>% select(-c(Facility)) %>% 
+  group_by(date, cases_cum_clarke, new_cases_clarke, X7_day_ave_clarke) %>%
+  summarize(sum_copy_num_L = sum(mean_total_copies)) %>%
+  ungroup() %>%
+  mutate(log_sum_copies_L = log10(sum_copy_num_L)) %>%
+  mutate(target = "N1")
+
+#n2
+smooth_n2 <- only_n2 %>% select(-c(Facility)) %>% 
+  group_by(date, cases_cum_clarke, new_cases_clarke, X7_day_ave_clarke) %>%
+  summarize(sum_copy_num_L = sum(mean_total_copies)) %>%
+  ungroup() %>%
+  mutate(log_sum_copies_L = log10(sum_copy_num_L)) %>%
+  mutate(target = "N2")
+```
+
+
+```{r}
+#add trendlines 
+#extract data from geom_smooth
+#average targets extract
+# *********************************span 0.6***********************************
+#*****************Must always update the n = TOTAL NUMBER OF DAYS*************************
+extract <- ggplot(rejoin, aes(x = date, y = log_sum_copies_both)) + 
+  stat_smooth(aes(outfit=fit_both<<-..y..), method = "loess", color = '#1B9E77', 
+              span = 0.25, n = 786)
+
+#look at the fits to align dates and total observations
+#both
+extract
+
+#assign fits to a vector
+both_trend <- fit_both
+
+#extract y min and max for each
+limits_both <- ggplot_build(extract)$data
+limits_both <- as.data.frame(limits_both)
+both_ymin <- limits_both$ymin
+both_ymax <- limits_both$ymax
+
+#reassign dataframes (just to be safe)
+work_both <- rejoin
+
+#fill in missing dates to smooth fits
+work_both <- work_both %>% complete(date = seq(min(date), max(date), by = "1 day"))
+date_vec_both <- work_both$date
+
+#create a new smooth dataframe to layer
+smooth_frame_both <- data.frame(date_vec_both, both_trend, both_ymin, both_ymax)
+
+```
+
+```{r}
+#make plotlys
+
+#plot smooth frames
+p3 <- plotly::plot_ly() %>%
+  plotly::add_lines(x = ~date_vec_both, y = ~both_trend,
+                    data = smooth_frame_both,
+                    hoverinfo = "text",
+                    text = ~paste('</br> Date: ', date_vec_both,
+                                  '</br> Median Log Copies: ', round(both_trend, digits = 2)),
+                    line = list(color = '#1B9E77', size = 8, opacity = 0.65),
+                    showlegend = FALSE) %>%
+plotly::add_ribbons(x ~date_vec_both, ymin = ~both_ymin, ymax = ~both_ymax,
+                    showlegend = FALSE,
+                    opacity = 0.25,
+                    hoverinfo = "text",
+                    text = ~paste('</br> Date: ', date_vec_both, #leaving in case we want to change
+                                  '</br> Max Log Copies: ', round(both_ymax, digits = 2),
+                                  '</br> Min Log Copies: ', round(both_ymin, digits = 2)),
+                    name = "",
+                    fillcolor = '#1B9E77',
+                    line = list(color = '#1B9E77')) %>%
+                layout(yaxis = list(title = "Total Log10 SARS CoV-2 Copies", 
+                                 showline = TRUE,
+                                 automargin = TRUE)) %>%
+                layout(xaxis = list(title = "Date")) %>%
+      plotly::add_segments(x = ~min(date_vec_both), 
+                                          xend = ~max(date_vec_both), 
+                                          y = 11.5, yend = 11.5,
+                                          opacity = 0.35,
+                                          name = "</br> Below Limit of Detection",
+                                          hoverinfo = "text",
+                                          text = "Below Limit of Detection",
+                                          showlegend = FALSE,
+                                          line = list(color = "black", dash = "dash")) %>%
+      plotly::add_annotations(x = as.Date("2020-11-15"),
+                          y = 11.5,
+                          text = "Limit of Detection") %>%
+  plotly::add_markers(x = ~date, y = ~log_sum_copies_both,
+                      data = rejoin,
+                       hoverinfo = "text",
+                       showlegend = FALSE,
+                       text = ~paste('</br> Date: ', date, 
+                                     '</br> Actual Log Copies: ', round(log_sum_copies_both, digits = 2)),
+                       marker = list(color = '#1B9E77', size = 6, opacity = 0.65))
+
+
+p3
+```
+
+Create final trend plot by stacking with epidemic curve
+
+```{r}
+smooth_extract <-
+    plotly::subplot(p3,p1, # plots to combine, top to bottom
+      nrows = 2,
+      heights = c(.6,.4),  # relative heights of the two plots
+      shareX = TRUE,  # plots will share an X axis
+      titleY = TRUE
+    ) %>%
+    # create a vertical "spike line" to compare data across 2 plots
+    plotly::layout(
+      xaxis = list(
+        spikethickness = 1,
+        spikedash = "dot",
+        spikecolor = "black",
+        spikemode = "across+marker",
+        spikesnap = "cursor"
+      ),
+      yaxis = list(spikethickness = 0)
+    )
+
+smooth_extract
+```
+
+
+
+```{r}
+save(smooth_extract, file = "./plotly_fig.rda")
+```
+
+Save an htmlwidget for website embedding
+```{r}
+htmlwidgets::saveWidget(smooth_extract, "plotly_fig.html")
+```
+
+
+******************************************************************************************************
+```{r}
+#six weeks ago
+last_6 <- Sys.Date() - 42
+#next filter base frames
+filter_n1 <- filter(only_n1, date >= last_6)
+filter_n2 <- filter(only_n2, date >= last_6)
+filter_background <- filter(only_background, date >= last_6)
+filter_smooth_frame_both <- filter(smooth_frame_both, date_vec_both >= last_6)
+filter_rejoin <- filter(rejoin, date >= last_6)
+```
+
+
+```{r}
+      #first layer is the background epidemic curve
+        p1_filter <- filter_background %>%
+              plotly::plot_ly() %>%
+              plotly::add_trace(x = ~date, y = ~new_cases_clarke, 
+                                type = "bar", 
+                                hoverinfo = "text",
+                                text = ~paste('</br> Date: ', date,
+                                                     '</br> Daily Cases: ', new_cases_clarke),
+                                alpha = 0.5,
+                                name = "Daily Reported Cases",
+                                color = background_color,
+                                colors = background_color,
+                                showlegend = FALSE) %>%
+            layout(yaxis = list(title = "Daily Cases", showline=TRUE)) %>%
+            layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
+        
+        #renders the main plot layer two as seven day moving average
+        p1_filter <- p1_filter %>% plotly::add_trace(x = ~date, y = ~X7_day_ave_clarke, 
+                             type = "scatter",
+                             mode = "lines",
+                             hoverinfo = "text",
+                            text = ~paste('</br> Date: ', date,
+                                                     '</br> Seven-Day Moving Average: ', X7_day_ave_clarke),
+                             name = "Seven Day Moving Average Athens",
+                             line = list(color = seven_day_ave_color),
+                             showlegend = FALSE)
+      
+
+        
+        #renders the main plot layer three as positive target hits
+        
+        p2_filter <- plotly::plot_ly() %>%
+          plotly::add_trace(x = ~date, y = ~mean_copy_num_L,
+                                       type = "scatter",
+                                       mode = "markers",
+                                       hoverinfo = "text",
+                                       text = ~paste('</br> Date: ', date,
+                                                     '</br> Facility: ', Facility,
+                                                     '</br> Target: ', target,
+                                                     '</br> Copies/L: ', round(mean_copy_num_L, digits = 2)),
+                                       data = filter_n1,
+                                       symbol = ~Facility,
+                                       marker = list(color = '#1B9E77', size = 8, opacity = 0.65),
+                                       showlegend = FALSE) %>%
+          plotly::add_trace(x = ~date, y = ~mean_copy_num_L,
+                                       type = "scatter",
+                                       mode = "markers",
+                                       hoverinfo = "text",
+                                       text = ~paste('</br> Date: ', date,
+                                                     '</br> Facility: ', Facility,
+                                                     '</br> Target: ', target,
+                                                     '</br> Copies/L: ', round(mean_copy_num_L, digits = 2)),
+                                       data = filter_n2,
+                                       symbol = ~Facility,
+                                       marker = list(color = '#D95F02', size = 8, opacity = 0.65),
+                                       showlegend = FALSE) %>%
+            layout(yaxis = list(title = "SARS CoV-2 Copies/L", 
+                                 showline = TRUE,
+                                 type = "log",
+                                 dtick = 1,
+                                 automargin = TRUE)) %>%
+            layout(legend = list(orientation = "h", x = 0.2, y = -0.3))
+        
+        #adds the limit of detection dashed line
+        p2_filter <- p2_filter %>% plotly::add_segments(x = as.Date(last_6), 
+                                          xend = ~max(date + 10), 
+                                          y = 3571.429, yend = 3571.429,
+                                          opacity = 0.35,
+                                          hoverinfo = "text",
+                                          text = "Limit of Detection",
+                                          line = list(color = "black", dash = "dash")) %>%
+          layout(annotations = list(x = as.Date(last_6), y = 3.8, xref = "x", yref = "y", 
+                                    text = "Limit of Detection", showarrow = FALSE))
+
+        
+
+        p1_filter
+        p2_filter
+        
+```
+```{r}
+filter_combined <-
+    plotly::subplot(p2_filter,p1_filter, # plots to combine, top to bottom
+      nrows = 2,
+      heights = c(.6,.4),  # relative heights of the two plots
+      shareX = TRUE,  # plots will share an X axis
+      titleY = TRUE
+    ) %>%
+    # create a vertical "spike line" to compare data across 2 plots
+    plotly::layout(
+      xaxis = list(
+        spikethickness = 1,
+        spikedash = "dot",
+        spikecolor = "black",
+        spikemode = "across+marker",
+        spikesnap = "cursor"
+      ),
+      yaxis = list(spikethickness = 0)
+    )
+filter_combined
+```
+```{r}
+p3_filter <- plotly::plot_ly() %>%
+  plotly::add_trace(x = ~date, y = ~sum_copies_both,
+                       type = 'scatter',
+                       mode = 'lines+markers',
+                       data = filter_rejoin,
+                       hoverinfo = "text",
+                       showlegend = FALSE,
+                       text = ~paste('</br> Date: ', date, 
+                                     '</br> SARS CoV-2 Copies: ', round(sum_copies_both, digits = 2)),
+                       line = list(color = '#1B9E77', size = 6, opacity = 0.65),
+                       marker = list(color = '#1B9E77', size = 8, opacity = 0.65)) %>%
+  layout(yaxis = list(title = "Total SARS CoV-2 Copies", 
+                                 showline = TRUE,
+                                 automargin = TRUE)) %>%
+
+    plotly::add_segments(x = ~last_6, 
+                                          xend = ~max(date_vec_both), 
+                                          y = 11.5, yend = 11.5,
+                                          opacity = 0.35,
+                                          name = "</br> Below Limit of Detection",
+                                          hoverinfo = "text",
+                                          text = "Below Limit of Detection",
+                                          showlegend = FALSE,
+                                          line = list(color = "black", dash = "dash")) 
+#%>%
+#      plotly::add_annotations(x = as.Date(last_6 + 7),
+#                          y = 11.5,
+#                          text = "Limit of Detection")
+
+  
+
+
+p3_filter
+```
+```{r}
+smooth_extract_filter <-
+    plotly::subplot(p3_filter,p1_filter, # plots to combine, top to bottom
+      nrows = 2,
+      heights = c(.6,.4),  # relative heights of the two plots
+      shareX = TRUE,  # plots will share an X axis
+      titleY = TRUE
+    ) %>%
+    # create a vertical "spike line" to compare data across 2 plots
+    plotly::layout(
+      xaxis = list(
+        spikethickness = 1,
+        spikedash = "dot",
+        spikecolor = "black",
+        spikemode = "across+marker",
+        spikesnap = "cursor"
+      ),
+      yaxis = list(spikethickness = 0)
+    )
+
+smooth_extract_filter
+```
+```{r}
+save(smooth_extract_filter, file = "./smooth_extract_filter.rda")
+
+```
+
+

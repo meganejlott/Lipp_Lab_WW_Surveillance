@@ -12,6 +12,7 @@
 library(tidyverse)
 library(plyr)
 library(dplyr)
+#install.packages("downloader")
 library(downloader)
 
 
@@ -24,7 +25,7 @@ library(downloader)
 #Sampling Data 
 ####Generate Sampling Data Set
 #Sampling Data 
-sample_data = data.frame("collection_num" = 5:234, "date" = c("2020-06-16", "2020-06-23", "2020-06-30", "2020-07-07", "2020-07-14", "2020-07-21", "2020-07-28", 
+sample_data = data.frame("collection_num" = 5:243, "date" = c("2020-06-16", "2020-06-23", "2020-06-30", "2020-07-07", "2020-07-14", "2020-07-21", "2020-07-28", 
                                                               "2020-08-04", "2020-08-11", "2020-08-18", "2020-08-25", "2020-09-01", 
                                                               "2020-09-08", "2020-09-15", "2020-09-22", "2020-09-29", 
                                                               "2020-10-06", "2020-10-13", "2020-10-20", "2020-10-27",
@@ -80,9 +81,11 @@ sample_data = data.frame("collection_num" = 5:234, "date" = c("2020-06-16", "202
                                                               "2022-10-05", "2022-10-10", "2022-10-12", "2022-10-17", 
                                                               "2022-10-19", "2022-10-24", "2022-10-26", "2022-10-31", 
                                                               "2022-11-02", "2022-11-07", "2022-11-09", "2022-11-14", 
-                                                              "2022-11-16", "2022-11-21"), stringsAsFactors = FALSE)
+                                                              "2022-11-16", "2022-11-21", "2022-11-28", "2022-11-30",
+                                                              "2022-12-05", "2022-12-07", "2022-12-12", "2022-12-14",
+                                                              "2022-12-19", "2022-12-21", "2023-01-04"), stringsAsFactors = FALSE)
 sample_data$date = as.Date(sample_data$date)
-sample_data$collection_num = as.character(sample_data$collection_num)
+sample_data$collection_num = as.numeric(sample_data$collection_num)
 
 
 ##Load StepOne Data (Year 1)
@@ -176,7 +179,8 @@ n1_n2_ave = rbind(stepone_n1_n2_ave, cfx_n1_n2_ave)
 
 
 ##Separate out the WRF, sample week, and Rep ID. 
-n1_n2_ave = n1_n2_ave %>% separate(col = sample_id, into = c("wrf","collection_num", "rep_id"), sep = "_")
+n1_n2_ave = n1_n2_ave %>% separate(col = sample_id, into = c("wrf","collection_num", "rep_id"), sep = "_") %>% 
+  mutate(collection_num = as.numeric(collection_num))
 
 #Add in the sample collection data
 n1_n2_ave = left_join(n1_n2_ave, sample_data, by = ("collection_num"))
@@ -196,17 +200,25 @@ n1_n2_plant = dplyr::left_join(n1_n2_ave, plant_data, by = c("date", "wrf"))
 #Make a new column, where you calculate the total number of copies of the target per day.
 n1_n2_plant = n1_n2_plant %>% mutate(total_copies = copy_num_L * influent_flow_L)
 
+
 #Now, average the extraction replicates 
-n1_n2_cleaned = plyr::ddply(n1_n2_plant, c("wrf", "collection_num","date", "target"), summarize, mean_copy_num_uL_rxn = mean(copy_num_uL_rxn), mean_copy_num_L = mean(copy_num_L), sd_L = sd(copy_num_L), mean_total_copies = mean(total_copies), sd_total_copies = sd(total_copies)) 
+n1_n2_cleaned = plyr::ddply(n1_n2_plant, c("wrf", "collection_num","date", "target"), 
+                            summarize, mean_copy_num_uL_rxn = mean(copy_num_uL_rxn), 
+                            mean_copy_num_L = mean(copy_num_L), sd_L = sd(copy_num_L), 
+                            se_L = sd(copy_num_L)/sqrt((length(copy_num_L))), mean_total_copies = mean(total_copies), 
+                            sd_total_copies = sd(total_copies), lo_95 = mean(copy_num_L) - 2*se_L, 
+                            up_95 = mean(copy_num_L) + 2*se_L)
+
 
 #Add in case data
-n1_n2_cleaned_cases = left_join(case_data, n1_n2_cleaned, by = c("date"))
+n1_n2_cleaned_cases = left_join(case_data, n1_n2_cleaned, by = c("date")) 
 
 
 #Quick look at the viral load
 ave_total_copies = plyr::ddply(n1_n2_cleaned, c("date", "wrf"), summarize, total_copies = mean(mean_total_copies))
 ave_total_copies = plyr::ddply(ave_total_copies, c("date"), summarize, total_copies = sum(total_copies))
-ave_total_copies %>% ggplot(aes(x = date, y = log10(total_copies))) + geom_point() + geom_line()
+ave_total_copies %>% ggplot(aes(x = date, y = log10(total_copies))) + geom_point()
+ggsave("./data/processed_data/Rplot.png")
 
 
 
@@ -245,3 +257,5 @@ saveRDS(n1_n2_cleaned_cases, "./data/processed_data/n1_n2_cleaned_cases.RDS") #S
 write.csv(n1_n2_cleaned_cases, "./data/processed_data/n1_n2_cleaned_cases.csv") #Send this to Slack (for Erin) 
 write.csv(recovery_calc, "./data/processed_data/bcov_recovery.csv") #For NWSS Update
 
+
+  
